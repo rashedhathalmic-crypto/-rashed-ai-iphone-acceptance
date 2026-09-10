@@ -1,0 +1,15 @@
+'use strict';
+const assert=require('assert');
+const {validateReceipt,SCHEMA}=require('./run125-receipt-validator');
+const now=Date.now();
+const base={schema:SCHEMA,created_at:new Date(now).toISOString(),origin:'https://example.invalid',capabilities:{secure_context:true,camera:true,microphone:true,webgl2:true,sample_rate:48000},metrics:{device_open_ms:120,camera_fps:30,camera_frame_jitter_p95_ms:2,audio_callback_jitter_p95_ms:1,vad_detected:true,speech_start_event_ms:80,barge_vad_to_speech_stop_ms:25,renderer_fps:60},measurement_notes:{speech_start_event_ms:'browser event only'}};
+assert.equal(validateReceipt(base,now).ok,true);
+assert.equal(validateReceipt(base,now).measurement_pass,true);
+assert.equal(validateReceipt({...base,origin:'http://example.invalid'},now).ok,false);
+assert.equal(validateReceipt({...base,created_at:new Date(now-16*60*1000).toISOString()},now).ok,false);
+assert.equal(validateReceipt({...base,transcript:'secret'},now).ok,false);
+assert.equal(validateReceipt({...base,metrics:{...base.metrics,camera_fps:1000}},now).ok,false);
+assert.equal(validateReceipt({...base,capabilities:{...base.capabilities,secure_context:false}},now).ok,false);
+assert.equal(validateReceipt(base,now).neural_acceptance,false);
+assert.equal(validateReceipt(base,now).photoreal_acceptance,false);
+console.log('Run125 receipt validator: PASS');
