@@ -4,12 +4,14 @@ const SCHEMA='rashed-client-runtime-benchmark-v2';
 const ALLOWED_TOP=new Set(['schema','created_at','origin','capabilities','metrics','measurement_notes']);
 const CAP_KEYS=new Set(['secure_context','camera','microphone','webgl2','sample_rate']);
 const METRIC_KEYS=new Set(['device_open_ms','camera_fps','camera_frame_jitter_p95_ms','audio_callback_jitter_p95_ms','vad_detected','speech_start_event_ms','barge_vad_to_speech_stop_ms','renderer_fps']);
-const FORBIDDEN=/audio|video|image|frame_data|transcript|text|prompt|response|landmark|embedding|biometric|blob|base64|pcm|wav|m4a/i;
+const FORBIDDEN_EXACT=new Set(['audio','video','image','frame_data','transcript','text','prompt','response','landmark','landmarks','embedding','embeddings','biometric','biometrics','blob','base64','pcm','wav','m4a']);
 function finiteOrNull(v){return v===null||(typeof v==='number'&&Number.isFinite(v)&&v>=0)}
-function rejectUnknown(obj,allowed,label){if(!obj||typeof obj!=='object'||Array.isArray(obj))throw new Error(label+' must be object');for(const k of Object.keys(obj)){if(!allowed.has(k))throw new Error('unknown '+label+' field: '+k);if(FORBIDDEN.test(k))throw new Error('forbidden content field: '+k)}}
+function rejectUnknown(obj,allowed,label){if(!obj||typeof obj!=='object'||Array.isArray(obj))throw new Error(label+' must be object');for(const k of Object.keys(obj)){if(!allowed.has(k))throw new Error('unknown '+label+' field: '+k);if(FORBIDDEN_EXACT.has(k.toLowerCase()))throw new Error('forbidden content field: '+k)}}
+function rejectForbiddenDeep(obj,path='receipt'){if(obj===null||typeof obj!=='object')return;for(const [k,v] of Object.entries(obj)){if(FORBIDDEN_EXACT.has(k.toLowerCase()))throw new Error('forbidden content field: '+path+'.'+k);if(v&&typeof v==='object')rejectForbiddenDeep(v,path+'.'+k)}}
 function validateReceipt(r,nowMs=Date.now()){
  if(!r||typeof r!=='object'||Array.isArray(r))return {ok:false,error:'receipt must be object'};
  try{
+  rejectForbiddenDeep(r);
   rejectUnknown(r,ALLOWED_TOP,'top');
   if(r.schema!==SCHEMA)throw new Error('unsupported schema');
   const created=Date.parse(r.created_at);if(!Number.isFinite(created))throw new Error('invalid created_at');
