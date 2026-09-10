@@ -1,0 +1,26 @@
+name: Run125 Voice Presence CI
+
+on:
+  push:
+    branches: ["voice-presence-run125"]
+  pull_request:
+    branches: ["voice-presence-run124"]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax check
+        run: |
+          node --check run125-receipt-validator.js
+          node --check run125-receipt-validator.test.js
+      - name: Receipt validator tests
+        run: node run125-receipt-validator.test.js
+      - name: Scope/privacy guard
+        run: |
+          ! grep -Eiq 'fetch\(|XMLHttpRequest|WebSocket|sendBeacon' run125-receipt-validator.js
+          ! grep -Eiq 'InsightFace|runpod|modal|paid' run125-receipt-validator.js
