@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Rashed AI — Local Whisper</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0b1020;color:#fff;margin:0;padding:18px}.card{max-width:760px;margin:auto;background:#151c32;padding:18px;border-radius:20px}button,input{width:100%;box-sizing:border-box;padding:15px;margin:7px 0;border:0;border-radius:14px;font-size:16px}.row{padding:11px;border-radius:10px;background:#0b1020;margin:7px 0}.pass{color:#4ade80}.warn{color:#facc15}.fail{color:#fb7185}progress{width:100%;height:18px}pre{white-space:pre-wrap;word-break:break-word;background:#0b1020;padding:12px;border-radius:10px}small{opacity:.8}
+</style>
+</head>
+<body><div class="card">
+<h1>Rashed AI — Whisper محلي</h1>
+<p>اختبار STT حقيقي داخل الآيفون. يتم تنزيل نموذج Whisper إلى المتصفح، لكن ملف الصوت نفسه لا يُرفع إلى أي خادم.</p>
+<p><b>النص المرجعي:</b> مرحبا يا راشد، هذا اختبار حقيقي للصوت باللغة العربية والإنجليزية. Rashed AI voice test number one.</p>
+<input id="file" type="file" accept="audio/*,.m4a,.wav,.webm">
+<button id="run">تشغيل Whisper على الملف المختار</button>
+<div class="row">حالة النموذج: <b id="model">لم يبدأ</b></div>
+<progress id="prog" max="100" value="0"></progress>
+<div class="row">زمن تحميل النموذج: <b id="load">—</b></div>
+<div class="row">مدة الصوت: <b id="dur">—</b></div>
+<div class="row">زمن التفريغ: <b id="infer">—</b></div>
+<div class="row">RTF: <b id="rtf">—</b></div>
+<div class="row">WER: <b id="wer">—</b></div>
+<div class="row">CER: <b id="cer">—</b></div>
+<div class="row">النتيجة: <b id="verdict">—</b></div>
+<pre id="out">النص الناتج سيظهر هنا.</pre>
+<small>مهم: هذا اختبار Whisper ONNX حقيقي داخل المتصفح، وليس faster-whisper. فائدته قياس جودة Whisper على تسجيلك الفعلي الآن دون خادم أو تكلفة.</small>
+</div>
+<script type="module">
+import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1';
+env.allowLocalModels=false;
+const $=id=>document.getElementById(id);
+const reference='مرحبا يا راشد هذا اختبار حقيقي للصوت باللغة العربية والإنجليزية rashed ai voice test number one';
+let transcriber=null;
+function set(id,text,cls=''){const e=$(id);e.textContent=text;e.className=cls}
+function norm(s){return s.toLowerCase().normalize('NFKC').replace(/[ًٌٍَُِّْـ]/g,'').replace(/[أإآ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/[^\p{L}\p{N}\s]/gu,' ').replace(/\s+/g,' ').trim()}
+function lev(a,b){const n=a.length,m=b.length;let p=Array.from({length:m+1},(_,i)=>i),c=new Array(m+1);for(let i=1;i<=n;i++){c[0]=i;for(let j=1;j<=m;j++)c[j]=Math.min(c[j-1]+1,p[j]+1,p[j-1]+(a[i-1]===b[j-1]?0:1));[p,c]=[c,p]}return p[m]}
+function metrics(ref,hyp){const r=norm(ref),h=norm(hyp),rw=r?r.split(' '):[],hw=h?h.split(' '):[];const rc=[...r.replace(/\s/g,'')],hc=[...h.replace(/\s/g,'')];return{wer:rw.length?lev(rw,hw)/rw.length:1,cer:rc.length?lev(rc,hc)/rc.length:1}}
+function resample(buf,target=16000){const ch=buf.getChannelData(0);if(buf.sampleRate===target)return new Float32Array(ch);const ratio=buf.sampleRate/target,len=Math.round(ch.length/ratio),out=new Float32Array(len);for(let i=0;i<len;i++){const x=i*ratio,j=Math.floor(x),f=x-j;out[i]=ch[j]*(1-f)+(ch[Math.min(j+1,ch.length-1)]||0)*f}return out}
+async function loadModel(){if(transcriber)return transcriber;set('model','يتم تنزيل Whisper…','warn');const t=performance.now();transcriber=await pipeline('automatic-speech-recognition','onnx-community/whisper-tiny',{dtype:'q8',progress_callback:p=>{if(p&&typeof p.progress==='number')$('prog').value=Math.max(0,Math.min(100,p.progress))}});set('load',Math.round(performance.now()-t)+' ms');set('model','PASS — Whisper جاهز','pass');$('prog').value=100;return transcriber}
+$('run').onclick=async()=>{const f=$('file').files[0];if(!f){set('verdict','اختر ملف الصوت أولًا','warn');return}try{set('verdict','جارٍ التحضير…','warn');const ab=await f.arrayBuffer();const ac=new (window.AudioContext||window.webkitAudioContext)();const decoded=await ac.decodeAudioData(ab.slice(0));const audio=resample(decoded,16000);const seconds=audio.length/16000;set('dur',seconds.toFixed(3)+' s');const pipe=await loadModel();set('verdict','Whisper يعمل الآن…','warn');const t=performance.now();const result=await pipe(audio,{language:'ar',task:'transcribe'});const ms=performance.now()-t;const text=(result&&result.text?result.text:'').trim();set('infer',Math.round(ms)+' ms');set('rtf',(ms/1000/seconds).toFixed(3));$('out').textContent=text||'(لم ينتج نص)';const m=metrics(reference,text);set('wer',(m.wer*100).toFixed(1)+'%');set('cer',(m.cer*100).toFixed(1)+'%');if(text){set('verdict','PASS — تفريغ Whisper حقيقي اكتمل','pass')}else set('verdict','FAIL — لا يوجد نص','fail');await ac.close()}catch(e){console.error(e);set('verdict','BLOCKED — '+(e.message||e),'fail');set('model',String(e.name||'ERROR'),'fail')}};
+</script></body></html>
