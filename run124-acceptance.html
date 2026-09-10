@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Rashed AI — Run124 Live Presence Metrics</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0b1020;color:#fff;margin:0;padding:18px}
+.card{max-width:760px;margin:auto;background:#151c32;padding:18px;border-radius:20px}
+button,a{display:block;box-sizing:border-box;width:100%;padding:14px;margin:8px 0;border:0;border-radius:14px;font-size:16px;font-weight:700;background:#38bdf8;color:#00111a;text-align:center;text-decoration:none}
+video{width:100%;background:#000;border-radius:16px;margin:10px 0}.row{padding:10px;background:#0b1020;border-radius:10px;margin:6px 0}
+.pass{color:#4ade80}.warn{color:#facc15}.fail{color:#fb7185}pre{white-space:pre-wrap;word-break:break-word;background:#0b1020;padding:12px;border-radius:10px}
+</style>
+</head>
+<body><div class="card">
+<h1>Rashed AI — Run124</h1>
+<p>Live-device metrics فقط. لا رفع تلقائي للصوت/الفيديو/النص/landmarks/embeddings.</p>
+<button id="start">ابدأ الكاميرا والمايك</button>
+<video id="v" autoplay playsinline muted></video>
+<div class="row">فتح الأجهزة: <b id="open">—</b></div>
+<div class="row">Camera FPS: <b id="cfps">—</b></div>
+<div class="row">Camera frame jitter p95: <b id="cjitter">—</b></div>
+<div class="row">Audio callback jitter p95: <b id="ajitter">—</b></div>
+<div class="row">VAD: <b id="vad">—</b></div>
+<button id="speak">اختبار الصوت + المقاطعة</button>
+<div class="row">Speech start event: <b id="first">—</b></div>
+<div class="row">VAD → speech stop: <b id="barge">—</b></div>
+<button id="render">اختبار WebGL</button>
+<div class="row">Renderer FPS: <b id="rfps">—</b></div>
+<button id="receipt">تصدير Receipt</button>
+<a id="dl" style="display:none">حفظ JSON</a>
+<button id="stop">إيقاف</button>
+<pre id="details"></pre>
+</div>
+<script>
+let stream,ctx,analyser,audioRaf,videoRaf,renderRaf,utter,armed=false;
+const M={secure_context:isSecureContext,camera:false,microphone:false,device_open_ms:null,camera_fps:null,camera_frame_jitter_p95_ms:null,audio_callback_jitter_p95_ms:null,vad_detected:false,speech_start_event_ms:null,barge_vad_to_speech_stop_ms:null,renderer_fps:null,webgl2:false,sample_rate:null};
+const $=id=>document.getElementById(id);
+const set=(id,t,c)=>{$(id).textContent=t;$(id).className=c||''};
+const p95=a=>{if(!a.length)return null;const s=[...a].sort((x,y)=>x-y);return s[Math.min(s.length-1,Math.ceil(.95*s.length)-1)]};
+async function startMedia(){
+  const t0=performance.now();
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:1280},height:{ideal:720}},audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+    M.device_open_ms=performance.now()-t0;$('v').srcObject=stream;
+    const vt=stream.getVideoTracks()[0],at=stream.getAudioTracks()[0];M.camera=!!vt;M.microphone=!!at;set('open',M.device_open_ms.toFixed(1)+' ms','pass');
+    if(vt)measureCamera();
+    if(at)await measureAudio();
+  }catch(e){set('open','BLOCKED: '+e.name,'fail');$('details').textContent=e.message}
+}
+function measureCamera(){
+  const intervals=[],start=performance.now();let last=null,frames=0;
+  const sample=now=>{if(last!==null)intervals.push(now-last);last=now;frames++;
+    if(now-start<3000){videoRaf=requestAnimationFrame(sample)}else{
+      M.camera_fps=frames/((now-start)/1000);const base=1000/Math.max(M.camera_fps,1);M.camera_frame_jitter_p95_ms=p95(intervals.map(x=>Math.abs(x-base)));
+      set('cfps',M.camera_fps.toFixed(1)+' fps',M.camera_fps>=24?'pass':'warn');set('cjitter',M.camera_frame_jitter_p95_ms.toFixed(2)+' ms','pass');
+    }};
+  videoRaf=requestAnimationFrame(sample);
+}
+async function measureAudio(){
+  ctx=new (window.AudioContext||window.webkitAudioContext)();await ctx.resume();M.sample_rate=ctx.sampleRate;
+  const src=ctx.createMediaStreamSource(stream);analyser=ctx.createAnalyser();analyser.fftSize=512;src.connect(analyser);
+  const data=new Uint8Array(analyser.frequencyBinCount),intervals=[];let last=performance.now(),speechFrames=0,start=last;
+  const tick=()=>{
+    const now=performance.now();intervals.push(now-last);last=now;analyser.getByteFrequencyData(data);let sum=0;for(const x of data)sum+=x;const avg=sum/data.length;
+    if(avg>12){speechFrames++;if(speechFrames>=3){M.vad_detected=true;set('vad','PASS','pass');if(armed&&speechSynthesis.speaking)beginBarge(now)}}else speechFrames=0;
+    if(now-start>=3000&&M.audio_callback_jitter_p95_ms===null){const med=intervals.sort((a,b)=>a-b)[Math.floor(intervals.length/2)]||0;M.audio_callback_jitter_p95_ms=p95(intervals.map(x=>Math.abs(x-med)));set('ajitter',M.audio_callback_jitter_p95_ms.toFixed(2)+' ms','pass')}
+    audioRaf=requestAnimationFrame(tick);
+  };tick();
+}
+function beginBarge(vadTime){
+  armed=false;speechSynthesis.cancel();
+  const poll=()=>{if(!speechSynthesis.speaking){M.barge_vad_to_speech_stop_ms=performance.now()-vadTime;set('barge',M.barge_vad_to_speech_stop_ms.toFixed(1)+' ms','pass')}else requestAnimationFrame(poll)};
+  requestAnimationFrame(poll);
+}
+function speak(){
+  if(!('speechSynthesis'in window)){set('first','UNAVAILABLE','fail');return}
+  speechSynthesis.cancel();const requested=performance.now();utter=new SpeechSynthesisUtterance('هذا اختبار صوت راشد. تكلم الآن بصوت واضح لمقاطعتي.');utter.lang='ar-SA';utter.rate=.9;
+  utter.onstart=()=>{M.speech_start_event_ms=performance.now()-requested;set('first',M.speech_start_event_ms.toFixed(1)+' ms','pass');armed=true;set('barge','تكلم الآن','warn')};
+  utter.onend=()=>{if(armed){armed=false;set('barge','لم تحدث مقاطعة','warn')}};speechSynthesis.speak(utter);
+}
+function testRender(){
+  const c=document.createElement('canvas'),gl2=c.getContext('webgl2'),gl=gl2||c.getContext('webgl');M.webgl2=!!gl2;if(!gl){set('rfps','WebGL unavailable','fail');return}
+  let n=0,t0=performance.now();const draw=()=>{gl.clear(gl.COLOR_BUFFER_BIT);n++;const now=performance.now();if(now-t0<3000)renderRaf=requestAnimationFrame(draw);else{M.renderer_fps=n/((now-t0)/1000);set('rfps',M.renderer_fps.toFixed(1)+' fps',M.renderer_fps>=50?'pass':'warn')}};draw();
+}
+function exportReceipt(){
+  const r={schema:'rashed-client-runtime-benchmark-v2',created_at:new Date().toISOString(),origin:location.origin,capabilities:{secure_context:M.secure_context,camera:M.camera,microphone:M.microphone,webgl2:M.webgl2,sample_rate:M.sample_rate},metrics:{device_open_ms:M.device_open_ms,camera_fps:M.camera_fps,camera_frame_jitter_p95_ms:M.camera_frame_jitter_p95_ms,audio_callback_jitter_p95_ms:M.audio_callback_jitter_p95_ms,vad_detected:M.vad_detected,speech_start_event_ms:M.speech_start_event_ms,barge_vad_to_speech_stop_ms:M.barge_vad_to_speech_stop_ms,renderer_fps:M.renderer_fps},measurement_notes:{speech_start_event_ms:'Browser SpeechSynthesis onstart event; not claimed as acoustic first-audio.',barge_vad_to_speech_stop_ms:'Local VAD detection timestamp to browser speechSynthesis.speaking=false; not a Chatterbox neural benchmark.'}};
+  const blob=new Blob([JSON.stringify(r,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob);$('dl').href=url;$('dl').download='rashed-run124-live-presence.json';$('dl').style.display='block';$('details').textContent=JSON.stringify(r,null,2);
+}
+function stopAll(){armed=false;speechSynthesis.cancel();[audioRaf,videoRaf,renderRaf].forEach(x=>x&&cancelAnimationFrame(x));if(stream)stream.getTracks().forEach(t=>t.stop());if(ctx)ctx.close();$('v').srcObject=null}
+$('start').onclick=startMedia;$('speak').onclick=speak;$('render').onclick=testRender;$('receipt').onclick=exportReceipt;$('stop').onclick=stopAll;
+</script></body></html>
